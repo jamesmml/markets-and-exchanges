@@ -1,8 +1,10 @@
-// compound_interest.c
-//
-// A simple compound interest calculator.
-//
-// Author: James Milgram
+/*
+ * compound_interest.c
+ *
+ * A simple compound interest calculator.
+ * 
+ * Author: James Milgram
+ */
 
 #include <stdio.h>
 #include <math.h>

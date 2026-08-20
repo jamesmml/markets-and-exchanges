@@ -1,7 +1,9 @@
 /*
  * compound_interest.c
  *
- * A simple compound interest calculator.
+ * A simple compound interest calculator. Strong economies with fair markets attract investment, leading to real
+ * economic growth. Compound interest is most powerful when paired with the growth and performance of strong
+ * economies. 
  * 
  * Author: James Milgram
  */

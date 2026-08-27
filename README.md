@@ -9,5 +9,10 @@ There are a limited number of systems that affect our lives profoundly and direc
 
 The U.S. and other developed nations can attribute much of their wealth to their market-based economies. Thus, the importance of understanding these systems cannot be overstated.
 
+## Contents
+- [l2-order-book-exploration](l2-order-book-exploration/):
+    - [exploration.ipynb](l2-order-book-exploration/exploration.ipynb) - diving into Coinbase's L2 order book data
+    - [exploration_utils.py](l2-order-book-exploration/exploration_utils.py) - utils/standalone script
+
 ## Author
 James Milgram

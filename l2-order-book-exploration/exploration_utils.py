@@ -6,10 +6,13 @@ This file can be used either as a standalone script or its functions can be impo
 Author: James Milgram
 """
 
-# Order book parsing 
-import websockets
+# Order book parsing
 import asyncio
+import signal
+import os
+import websockets
 import json
+from datetime import datetime
 
 # Data analysis/computation
 import pandas as pd
@@ -31,11 +34,9 @@ def update_order_book(order_book_update: list, local_order_book: list) -> None:
         new_quantity = update["new_quantity"]
 
         while (not order_found):
-            order_book = local_order_book
-
             # Logic for inserting new orders differs between bids and asks
             if side == "bid":
-                for idx, order in enumerate(order_book):
+                for idx, order in enumerate(local_order_book):
                     order_price = Decimal(order["price_level"])
                     if order["side"] != "bid":
                         continue
@@ -47,23 +48,27 @@ def update_order_book(order_book_update: list, local_order_book: list) -> None:
                             local_order_book[idx] = update
                         break
                     # If all bids are higher and the next order is an ask, then the new order is lowest bid
-                    elif order_price > price_level and order_book[idx + 1]["side"] == "offer":
-                        order_found = True
-                        local_order_book.insert(idx + 1, update)
-                        break
+                    elif order_price > price_level and local_order_book[idx + 1]["side"] == "offer":
+                        if new_quantity != "0":
+                            order_found = True
+                            local_order_book.insert(idx + 1, update)
+                            break
                     # Skip higher bids otherwise
                     elif order_price > price_level:
                         continue
                     # Using elif to be explicit: add a new order to the local book if a lower bid is found
                     elif order_price < price_level:
-                        order_found = True
-                        local_order_book.insert(idx, update)
-                        break
+                        if new_quantity != "0":
+                            order_found = True
+                            local_order_book.insert(idx, update)
+                            break
                     else:
                         raise RuntimeError(f"Unexpected behavior: current order - {order}\n" + \
                                 f"current update - {update}")
+                # Orders with new_quantity = "0" that are not found in the local order book are not added
+                break
             else:
-                for idx, order in enumerate(order_book):
+                for idx, order in enumerate(local_order_book):
                     order_price = Decimal(order["price_level"])
                     if order["side"] != "offer":
                         continue
@@ -75,21 +80,25 @@ def update_order_book(order_book_update: list, local_order_book: list) -> None:
                             local_order_book[idx] = update
                         break
                     # If all asks are lower, then the new order is the largest ask
-                    elif order_price < price_level and idx == len(order_book) - 1:
-                        order_found = True
-                        local_order_book.append(update)
-                        break
+                    elif order_price < price_level and idx == len(local_order_book) - 1:
+                        if new_quantity != "0":
+                            order_found = True
+                            local_order_book.append(update)
+                            break
                     # Skip lower asks otherwise
                     elif order_price < price_level:
                         continue
                     # Using elif to be explicit: add a new order to the local book if a larger ask is found
                     elif order_price > price_level:
-                        order_found = True
-                        local_order_book.insert(idx, update)
-                        break
+                        if new_quantity != "0":
+                            order_found = True
+                            local_order_book.insert(idx, update)
+                            break
                     else:
                         raise RuntimeError(f"Unexpected behavior: current order - {order}\n" + \
                                 f"current update - {update}")
+                # Orders with new_quantity = "0" that are not found in the local order book are not added
+                break
 
 def compute_stats(currency: str, order_book_timestamp: str, order_book: list) -> dict:
     """
@@ -131,7 +140,7 @@ def compute_stats(currency: str, order_book_timestamp: str, order_book: list) ->
 
     # Order book imbalance: a fraction that gives insight into how a market "feels" about an asset
     # A positive OBI means that orders are buying more than selling where a negative OBI means that orders are selling more than buying
-    obi = (bid_volume - ask_volume) / total_volume
+    obi = (bid_volume - ask_volume) / total_volume if total_volume != Decimal("0") else Decimal("NaN")
 
     stats = {
         "currency": currency,
@@ -145,7 +154,7 @@ def compute_stats(currency: str, order_book_timestamp: str, order_book: list) ->
 
     return stats
 
-async def parse_order_books(url: str, message: dict, currencies: list) -> None:
+async def parse_order_books(url: str, message: dict, currencies: list, dir_name: str = "data") -> None:
     """
     Function for parsing L2 order book data of various cryptocurrencies.
 
@@ -153,16 +162,24 @@ async def parse_order_books(url: str, message: dict, currencies: list) -> None:
         url : The URL to Coinbase's Advance Trade WebSocket
         message : A desired subscription message
         currencies : A list of the desired cryptocurrencies
+        dir_name : Desired directory name for storing order book data
     """
     DESIRED_CHANNEL = "l2_data"
+
+    # "Graceful" termination logic
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, stop_event.set)
 
     # Accumulator of local order books
     local_order_books = {currency:None for currency in currencies}
 
-    # DataFrame for tracking order book evolution
-    stats_df = pd.DataFrame()
+    # DataFrames for tracking order book evolution
+    stats_dfs = {currency:pd.DataFrame() for currency in currencies}
 
     try:
+        print(f"Recording L2 order book data for: {str(currencies).replace("[", "").replace("]", "")}", end = "\r")
+
         # Connect to Coinbase server
         ws = await websockets.connect(url, max_size = 10*1024*1024)
 
@@ -170,7 +187,7 @@ async def parse_order_books(url: str, message: dict, currencies: list) -> None:
         await ws.send(json.dumps(message))
 
         # Loop for processing order book data
-        while True:
+        while not stop_event.is_set():
             response = json.loads(await ws.recv())
 
             # Ignore responses that don't contain order book data
@@ -196,14 +213,23 @@ async def parse_order_books(url: str, message: dict, currencies: list) -> None:
 
             stats = compute_stats(currency = currency, order_book_timestamp = order_book_timestamp, order_book = local_order_books[currency])
 
-            with open(f"{currency}_{order_book_timestamp}.json", "w", encoding = "utf-8") as f:
-                json.dump(stats, f, indent = 2)
+            stats_dfs[currency] = pd.concat([stats_dfs[currency], pd.DataFrame([stats])])
 
     finally:
         # Close server connection
-        print("Closing connection...", end = "\r")
+        print("\x1b[2K" + "Closing connection...", end = "\r")
         await ws.close()
         print("\x1b[2K" + "Connection closed!")
+
+        # Record order books and stats for analysis on exit
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        os.makedirs(dir_name, exist_ok = True)
+
+        for currency, df in stats_dfs.items():
+            df.to_csv(f"{dir_name}{os.sep}{currency}_stats_{current_time}.csv", index = False)
+            with open(f"{dir_name}{os.sep}{currency}_order_book_{current_time}.json", "w", encoding = "utf-8") as f:
+                json.dump(local_order_books[currency], f, indent = 2)
 
 if __name__ == "__main__":
     # Coinbase WebSocket URL

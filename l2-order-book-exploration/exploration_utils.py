@@ -159,7 +159,7 @@ async def parse_order_books(url: str, message: dict, currencies: list, dir_name:
     Function for parsing L2 order book data of various cryptocurrencies.
 
     Args:
-        url : The URL to Coinbase's Advance Trade WebSocket
+        url : The URL to Coinbase's Advanced Trade WebSocket
         message : A desired subscription message
         currencies : A list of the desired cryptocurrencies
         dir_name : Desired directory name for storing order book data
